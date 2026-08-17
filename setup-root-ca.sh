@@ -3,6 +3,55 @@
 set -euo pipefail
 
 CA_DIR="${1:-./ca}"
+CA_CONFIG="${CA_DIR}/openssl.cnf"
+
+# -----------------------------------------------------------------------------
+# 0. Required subject values for the root certificate
+# -----------------------------------------------------------------------------
+for required_var in CA_COUNTRY CA_STATE CA_LOCALITY CA_ORG CA_ORG_UNIT CA_COMMON_NAME; do
+  if [ -z "${!required_var:-}" ]; then
+    echo "[!] Required environment variable ${required_var} is not set." >&2
+    echo "    Example:" >&2
+    echo "      CA_COUNTRY=SN CA_STATE=Dakar CA_LOCALITY=Dakar " >&2
+    echo "      CA_ORG='My Organization' CA_ORG_UNIT='My Organization Root CA' " >&2
+    echo "      CA_COMMON_NAME='My Organization Root CA' ./setup-root-ca.sh" >&2
+    exit 1
+  fi
+done
+
+CA_EMAIL="${CA_EMAIL:-}"
+
+echo "[*] Using existing CA directory: ${CA_DIR}"
+if [ ! -d "${CA_DIR}" ]; then
+  echo "[!] Directory does not exist: ${CA_DIR}" >&2
+  exit 1
+fi
+
+if [ ! -f "${CA_CONFIG}" ]; then
+  echo "[!] Missing OpenSSL config file: ${CA_CONFIG}" >&2
+  exit 1
+fi
+
+echo "[*] Distinguished Name values for this CA:"
+echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}"
+echo "      O=${CA_ORG}  OU=${CA_ORG_UNIT}  CN=${CA_COMMON_NAME}"
+echo "      emailAddress=${CA_EMAIL:-<none>}"
+echo "    Values are read from environment variables; no DN defaults are set in the repo config."
+
+# -----------------------------------------------------------------------------
+# 0. Distinguished Name defaults (override via env vars)
+# -----------------------------------------------------------------------------
+CA_COUNTRY="${CA_COUNTRY:-SN}"
+CA_STATE="${CA_STATE:-Dakar}"
+CA_LOCALITY="${CA_LOCALITY:-Dakar}"
+CA_ORG="${CA_ORG:-My Organization}"
+CA_ORG_UNIT="${CA_ORG_UNIT:-My Organization Root CA}"
+CA_EMAIL="${CA_EMAIL:-}"
+
+echo "[*] Distinguished Name defaults for this CA:"
+echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}"
+echo "      O=${CA_ORG}  OU=${CA_ORG_UNIT}  emailAddress=${CA_EMAIL:-<none>}"
+echo "    Override with CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG / CA_ORG_UNIT / CA_EMAIL"
 
 # -----------------------------------------------------------------------------
 # 0. Distinguished Name defaults (override via env vars)
@@ -22,10 +71,7 @@ echo "    Override with CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG / CA_ORG_UN
 # -----------------------------------------------------------------------------
 # 1. Directory structure
 # -----------------------------------------------------------------------------
-echo "[*] Creating CA directory structure at ${CA_DIR}"
-mkdir -p "${CA_DIR}"
 cd "${CA_DIR}"
-
 mkdir -p certs crl newcerts private csr
 chmod 700 private
 
@@ -37,135 +83,19 @@ touch index.txt
 [ -f crlnumber ] || echo 1000 > crlnumber
 
 # -----------------------------------------------------------------------------
-# 2. Configuration file (openssl.cnf)
+# 2. Use the existing OpenSSL config; do not overwrite it
 # -----------------------------------------------------------------------------
-# Generated locally rather than fetched, since the jamielinux.com URL serves
-# an HTML doc page, not the raw config — piping that into openssl.cnf would
-# produce a broken config.
-#
-# Heredoc is UNQUOTED so CA_COUNTRY etc. get substituted by bash; every
-# OpenSSL-native $var (like $dir) is escaped with a backslash so OpenSSL
-# still expands those itself at run time.
-echo "[*] Writing openssl.cnf"
-cat > openssl.cnf <<EOF
-# OpenSSL root CA configuration file.
-
-[ ca ]
-default_ca = CA_default
-
-[ CA_default ]
-dir               = .
-certs             = \$dir/certs
-crl_dir           = \$dir/crl
-new_certs_dir     = \$dir/newcerts
-database          = \$dir/index.txt
-serial            = \$dir/serial
-RANDFILE          = \$dir/private/.rand
-
-private_key       = \$dir/private/ca.key.pem
-certificate       = \$dir/certs/ca.cert.pem
-
-crlnumber         = \$dir/crlnumber
-crl               = \$dir/crl/ca.crl.pem
-crl_extensions    = crl_ext
-default_crl_days  = 365
-
-default_md        = sha256
-
-name_opt          = ca_default
-cert_opt          = ca_default
-default_days      = 375
-preserve          = no
-policy            = policy_strict
-
-[ policy_strict ]
-countryName             = match
-stateOrProvinceName     = match
-organizationName        = match
-organizationalUnitName  = optional
-commonName              = supplied
-emailAddress            = optional
-
-[ policy_loose ]
-countryName             = optional
-stateOrProvinceName     = optional
-localityName            = optional
-organizationName        = optional
-organizationalUnitName  = optional
-commonName              = supplied
-emailAddress            = optional
-
-[ req ]
-default_bits        = 4096
-distinguished_name  = req_distinguished_name
-string_mask         = utf8only
-default_md          = sha256
-x509_extensions     = v3_ca
-
-[ req_distinguished_name ]
-countryName                    = Country Name (2 letter code)
-stateOrProvinceName             = State or Province Name
-localityName                    = Locality Name
-0.organizationName               = Organization Name
-organizationalUnitName          = Organizational Unit Name
-commonName                      = Common Name
-emailAddress                    = Email Address
-
-countryName_default             = ${CA_COUNTRY}
-stateOrProvinceName_default     = ${CA_STATE}
-localityName_default            = ${CA_LOCALITY}
-0.organizationName_default      = ${CA_ORG}
-organizationalUnitName_default  = ${CA_ORG_UNIT}
-EOF
-
-# emailAddress_default is only written if CA_EMAIL was set, so an empty
-# value doesn't force an empty-but-present field in the req prompts.
-if [ -n "${CA_EMAIL}" ]; then
-  echo "emailAddress_default             = ${CA_EMAIL}" >> openssl.cnf
+if [ ! -s "${CA_CONFIG}" ]; then
+  echo "[!] ${CA_CONFIG} is empty. Restore the repository's configuration before continuing." >&2
+  exit 1
 fi
 
-cat >> openssl.cnf <<'EOF'
-
-[ v3_ca ]
-subjectKeyIdentifier   = hash
-authorityKeyIdentifier = keyid:always,issuer
-basicConstraints       = critical, CA:true
-keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
-
-[ v3_intermediate_ca ]
-subjectKeyIdentifier   = hash
-authorityKeyIdentifier = keyid:always,issuer
-basicConstraints       = critical, CA:true, pathlen:0
-keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
-
-[ usr_cert ]
-basicConstraints        = CA:FALSE
-nsCertType               = client, email
-nsComment                = "OpenSSL Generated Client Certificate"
-subjectKeyIdentifier    = hash
-authorityKeyIdentifier  = keyid,issuer
-keyUsage                 = critical, nonRepudiation, digitalSignature, keyEncipherment
-extendedKeyUsage         = clientAuth, emailProtection
-
-[ server_cert ]
-basicConstraints        = CA:FALSE
-nsCertType               = server
-nsComment                = "OpenSSL Generated Server Certificate"
-subjectKeyIdentifier    = hash
-authorityKeyIdentifier  = keyid,issuer:always
-keyUsage                 = critical, digitalSignature, keyEncipherment
-extendedKeyUsage         = serverAuth
-
-[ crl_ext ]
-authorityKeyIdentifier = keyid:always
-
-[ ocsp ]
-basicConstraints        = CA:FALSE
-subjectKeyIdentifier    = hash
-authorityKeyIdentifier  = keyid,issuer
-keyUsage                 = critical, digitalSignature
-extendedKeyUsage         = critical, OCSPSigning
-EOF
+# Build the subject explicitly from env vars so the req defaults in the config
+# may remain empty while the script still runs non-interactively.
+SUBJECT="/C=${CA_COUNTRY}/ST=${CA_STATE}/L=${CA_LOCALITY}/O=${CA_ORG}/OU=${CA_ORG_UNIT}/CN=${CA_COMMON_NAME}"
+if [ -n "${CA_EMAIL}" ]; then
+  SUBJECT="${SUBJECT}/emailAddress=${CA_EMAIL}"
+fi
 
 # -----------------------------------------------------------------------------
 # 3. Root private key
@@ -184,7 +114,8 @@ fi
 # -----------------------------------------------------------------------------
 echo "[*] Generating self-signed root certificate (10 years, sha256)"
 openssl req -new -x509 -days 3650 \
-  -config openssl.cnf \
+  -config "${CA_CONFIG}" \
+  -subj "${SUBJECT}" \
   -key private/ca.key.pem \
   -out certs/ca.cert.pem \
   -extensions v3_ca \

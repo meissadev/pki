@@ -77,13 +77,16 @@ organizationalUnitName          = Organizational Unit Name
 commonName                      = Common Name
 emailAddress                    = Email Address
 
-# Optionally, specify some defaults.
-countryName_default             =
-stateOrProvinceName_default     =
-localityName_default            =
-0.organizationName_default      =
-organizationalUnitName_default  =
-emailAddress_default            =
+# Defaults may be supplied via environment variables before running the script.
+# If unset, OpenSSL leaves the values blank and `-subj` in setup-root-ca.sh
+# supplies the required values instead.
+countryName_default             = ${ENV::CA_COUNTRY}
+stateOrProvinceName_default     = ${ENV::CA_STATE}
+localityName_default            = ${ENV::CA_LOCALITY}
+0.organizationName_default      = ${ENV::CA_ORG}
+organizationalUnitName_default  = ${ENV::CA_ORG_UNIT}
+commonName_default              = ${ENV::CA_COMMON_NAME}
+emailAddress_default            = ${ENV::CA_EMAIL}
 
 [ v3_ca ]
 # Extensions for a typical CA (`man x509v3_config`).
