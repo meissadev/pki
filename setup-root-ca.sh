@@ -3,7 +3,8 @@
 set -euo pipefail
 
 CA_DIR="${1:-./ca}"
-CA_CONFIG="${CA_DIR}/openssl.cnf"
+cd "${CA_DIR}"
+CA_CONFIG="./openssl.cnf"
 
 # -----------------------------------------------------------------------------
 # 0. Required subject values for the root certificate
@@ -71,7 +72,6 @@ echo "    Override with CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG / CA_ORG_UN
 # -----------------------------------------------------------------------------
 # 1. Directory structure
 # -----------------------------------------------------------------------------
-cd "${CA_DIR}"
 mkdir -p certs crl newcerts private csr
 chmod 700 private
 
