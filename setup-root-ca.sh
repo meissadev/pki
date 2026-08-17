@@ -3,8 +3,22 @@
 set -euo pipefail
 
 CA_DIR="${1:-./ca}"
+
+echo "[*] Using existing CA directory: ${CA_DIR}"
+if [ ! -d "${CA_DIR}" ]; then
+  echo "[!] Directory does not exist: ${CA_DIR}" >&2
+  exit 1
+fi
+
 cd "${CA_DIR}"
+
 CA_CONFIG="./openssl.cnf"
+
+
+if [ ! -f "${CA_CONFIG}" ]; then
+  echo "[!] Missing OpenSSL config file: ${CA_CONFIG}" >&2
+  exit 1
+fi
 
 # -----------------------------------------------------------------------------
 # 0. Required subject values for the root certificate
@@ -21,17 +35,6 @@ for required_var in CA_COUNTRY CA_STATE CA_LOCALITY CA_ORG CA_ORG_UNIT CA_COMMON
 done
 
 CA_EMAIL="${CA_EMAIL:-}"
-
-echo "[*] Using existing CA directory: ${CA_DIR}"
-if [ ! -d "${CA_DIR}" ]; then
-  echo "[!] Directory does not exist: ${CA_DIR}" >&2
-  exit 1
-fi
-
-if [ ! -f "${CA_CONFIG}" ]; then
-  echo "[!] Missing OpenSSL config file: ${CA_CONFIG}" >&2
-  exit 1
-fi
 
 echo "[*] Distinguished Name values for this CA:"
 echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}"
