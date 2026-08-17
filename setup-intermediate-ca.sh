@@ -39,6 +39,7 @@ if [ $# -lt 1 ]; then
 fi
 
 ROOT_CA_DIR="$(cd "$1" && pwd)"
+export ROOT_CA_DIR
 INT_DIR="${2:-./intermediate}"
 
 if [ ! -f "${ROOT_CA_DIR}/openssl.cnf" ] || [ ! -f "${ROOT_CA_DIR}/private/ca.key.pem" ]; then
