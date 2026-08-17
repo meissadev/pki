@@ -15,7 +15,7 @@ database          = $dir/index.txt
 serial            = $dir/serial
 RANDFILE          = $dir/private/.rand
 
-# The root key and root certificate.
+# The intermediate key and intermediate certificate.
 private_key       = $dir/private/intermediate.key.pem
 certificate       = $dir/certs/intermediate.cert.pem
 
@@ -64,7 +64,9 @@ string_mask         = utf8only
 # SHA-1 is deprecated, so use SHA-2 instead.
 default_md          = sha256
 
-# Extension to add when the -x509 option is used.
+# Extension to add when the -x509 option is used (unused by
+# setup-intermediate-ca.sh, which only does `openssl req -new`; kept for
+# parity with the root config and for anyone running this file by hand).
 x509_extensions     = v3_ca
 
 [ req_distinguished_name ]
@@ -77,13 +79,19 @@ organizationalUnitName          = Organizational Unit Name
 commonName                      = Common Name
 emailAddress                    = Email Address
 
-# Optionally, specify some defaults.
-countryName_default             = GB
-stateOrProvinceName_default     = England
-localityName_default            =
-0.organizationName_default      = Alice Ltd
-organizationalUnitName_default  =
-emailAddress_default            =
+# countryName / stateOrProvinceName / localityName / organizationName MUST
+# match the root's values (policy_strict on the root enforces this when it
+# signs this intermediate's CSR). setup-intermediate-ca.sh sources them from
+# <root-ca-dir>/ca-defaults.env instead of having them retyped here.
+# organizationalUnitName / commonName / emailAddress are intermediate-
+# specific and passed as their own required env vars.
+countryName_default             = ${ENV::CA_COUNTRY}
+stateOrProvinceName_default     = ${ENV::CA_STATE}
+localityName_default            = ${ENV::CA_LOCALITY}
+0.organizationName_default      = ${ENV::CA_ORG}
+organizationalUnitName_default  = ${ENV::CA_ORG_UNIT}
+commonName_default              = ${ENV::CA_COMMON_NAME}
+emailAddress_default            = ${ENV::CA_EMAIL}
 
 [ v3_ca ]
 # Extensions for a typical CA (`man x509v3_config`).
@@ -94,6 +102,9 @@ keyUsage = critical, digitalSignature, cRLSign, keyCertSign
 
 [ v3_intermediate_ca ]
 # Extensions for a typical intermediate CA (`man x509v3_config`).
+# This is the extension block the ROOT applies when signing this
+# intermediate's CSR (see setup-intermediate-ca.sh step 4), not something
+# used from within this file.
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer
 basicConstraints = critical, CA:true, pathlen:0

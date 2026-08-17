@@ -2,12 +2,34 @@
 #
 # setup-intermediate-ca.sh
 # Step 2 of a Root CA / Intermediate CA PKI hierarchy.
-# Creates the Intermediate CA directory structure and config, generates its
-# key + CSR, then gets it signed by the Root CA and builds the chain file.
 #
-# Usage: ./setup-intermediate-ca.sh <root-ca-dir> [intermediate-dir]
-#   root-ca-dir       path to the Root CA created by setup-root-ca.sh (required)
-#   intermediate-dir  defaults to "./intermediate"
+# Operates on an ALREADY-EXISTING ./intermediate/openssl.cnf (${ENV::VAR}
+# substitutions) — generates the intermediate key + CSR, then gets it
+# signed by the root and builds the chain file.
+#
+# Usage:
+#   CA_ORG_UNIT="My Organization Intermediate CA" \
+#   CA_COMMON_NAME="My Organization Intermediate CA" \
+#   [CA_EMAIL=pki@example.com] \
+#   ./setup-intermediate-ca.sh <root-ca-dir> [intermediate-dir]
+#
+# root-ca-dir       path to the root created by setup-root-ca.sh (required)
+# intermediate-dir  defaults to "./intermediate", must already contain
+#                    openssl.cnf
+#
+# CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG are NOT meant to be retyped
+# here: this script sources <root-ca-dir>/ca-defaults.env, written by
+# setup-root-ca.sh from the values used for the root, so C/ST/L/O are
+# automatically identical to the root's — required for policy_strict on the
+# root to accept the signing request in step 4 below. You only need to
+# supply CA_ORG_UNIT and CA_COMMON_NAME (and optionally CA_EMAIL), which are
+# meant to differ from the root's own OU/CN.
+#
+# This is the "best way" to keep root and intermediate DN fields in sync:
+# no manual retyping, no risk of a C/ST/O typo silently breaking the sign
+# step later. If you genuinely need to override an inherited value for this
+# run only, export it yourself before invoking the script — the sourced
+# file uses ":=" so it never clobbers an already-exported variable.
 
 set -euo pipefail
 
@@ -20,18 +42,60 @@ ROOT_CA_DIR="$(cd "$1" && pwd)"
 INT_DIR="${2:-./intermediate}"
 
 if [ ! -f "${ROOT_CA_DIR}/openssl.cnf" ] || [ ! -f "${ROOT_CA_DIR}/private/ca.key.pem" ]; then
-  echo "[!] ${ROOT_CA_DIR} doesn't look like a Root CA dir (missing openssl.cnf or private/ca.key.pem)" >&2
+  echo "[!] ${ROOT_CA_DIR} doesn't look like a root CA dir (missing openssl.cnf or private/ca.key.pem)" >&2
   exit 1
 fi
 
 echo "[*] Using Root CA at: ${ROOT_CA_DIR}"
 
 # -----------------------------------------------------------------------------
+# 0. C/ST/L/O inherited from the root; OU/CN/email required for this run
+# -----------------------------------------------------------------------------
+if [ -f "${ROOT_CA_DIR}/ca-defaults.env" ]; then
+  echo "[*] Sourcing shared DN fields from ${ROOT_CA_DIR}/ca-defaults.env"
+  # shellcheck disable=SC1091
+  source "${ROOT_CA_DIR}/ca-defaults.env"
+else
+  echo "[!] ${ROOT_CA_DIR}/ca-defaults.env not found." >&2
+  echo "    Was the root created with the current setup-root-ca.sh? Falling back to" >&2
+  echo "    requiring CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG to be set manually." >&2
+fi
+
+for required_var in CA_COUNTRY CA_STATE CA_LOCALITY CA_ORG CA_ORG_UNIT CA_COMMON_NAME; do
+  if [ -z "${!required_var:-}" ]; then
+    echo "[!] Required environment variable ${required_var} is not set." >&2
+    echo "    Example:" >&2
+    echo "      CA_ORG_UNIT='My Organization Intermediate CA' \\" >&2
+    echo "      CA_COMMON_NAME='My Organization Intermediate CA' \\" >&2
+    echo "      ./setup-intermediate-ca.sh ${ROOT_CA_DIR}" >&2
+    exit 1
+  fi
+done
+export CA_COUNTRY CA_STATE CA_LOCALITY CA_ORG CA_ORG_UNIT CA_COMMON_NAME
+CA_EMAIL="${CA_EMAIL:-}"
+export CA_EMAIL
+
+echo "[*] Distinguished Name for this intermediate:"
+echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}  (inherited from root)"
+echo "      O=${CA_ORG}  (inherited from root)"
+echo "      OU=${CA_ORG_UNIT}  CN=${CA_COMMON_NAME}  emailAddress=${CA_EMAIL:-<none>}"
+
+# -----------------------------------------------------------------------------
 # 1. Directory structure
 # -----------------------------------------------------------------------------
-echo "[*] Creating intermediate CA directory structure at ${INT_DIR}"
-mkdir -p "${INT_DIR}"
+echo "[*] Using existing intermediate directory: ${INT_DIR}"
+if [ ! -d "${INT_DIR}" ]; then
+  echo "[!] Directory does not exist: ${INT_DIR}" >&2
+  exit 1
+fi
+
 cd "${INT_DIR}"
+INT_CONFIG="./openssl.cnf"
+
+if [ ! -s "${INT_CONFIG}" ]; then
+  echo "[!] Missing or empty OpenSSL config file: ${INT_CONFIG}" >&2
+  exit 1
+fi
 
 mkdir -p certs crl csr newcerts private
 chmod 700 private
@@ -43,118 +107,7 @@ touch index.txt
 [ -f crlnumber ] || echo 1000 > crlnumber
 
 # -----------------------------------------------------------------------------
-# 2. Configuration file (openssl.cnf)
-# -----------------------------------------------------------------------------
-# Generated locally (same reasoning as the root script) so it always matches
-# what -extensions v3_intermediate_ca expects, and points "dir" at this
-# intermediate tree rather than the root's.
-echo "[*] Writing openssl.cnf"
-cat > openssl.cnf <<EOF
-# OpenSSL intermediate CA configuration file.
-
-[ ca ]
-default_ca = CA_default
-
-[ CA_default ]
-dir               = .
-certs             = \$dir/certs
-crl_dir           = \$dir/crl
-new_certs_dir     = \$dir/newcerts
-database          = \$dir/index.txt
-serial            = \$dir/serial
-RANDFILE          = \$dir/private/.rand
-
-private_key       = \$dir/private/intermediate.key.pem
-certificate       = \$dir/certs/intermediate.cert.pem
-
-crlnumber         = \$dir/crlnumber
-crl               = \$dir/crl/intermediate.crl.pem
-crl_extensions    = crl_ext
-default_crl_days  = 365
-
-default_md        = sha256
-
-name_opt          = ca_default
-cert_opt          = ca_default
-default_days      = 375
-preserve          = no
-policy            = policy_loose
-
-[ policy_strict ]
-countryName             = match
-stateOrProvinceName     = match
-organizationName        = match
-organizationalUnitName  = optional
-commonName              = supplied
-emailAddress            = optional
-
-[ policy_loose ]
-countryName             = optional
-stateOrProvinceName     = optional
-localityName            = optional
-organizationName        = optional
-organizationalUnitName  = optional
-commonName              = supplied
-emailAddress            = optional
-
-[ req ]
-default_bits        = 4096
-distinguished_name  = req_distinguished_name
-string_mask         = utf8only
-default_md          = sha256
-
-[ req_distinguished_name ]
-countryName                    = Country Name (2 letter code)
-stateOrProvinceName             = State or Province Name
-localityName                    = Locality Name
-0.organizationName               = Organization Name
-organizationalUnitName          = Organizational Unit Name
-commonName                      = Common Name
-emailAddress                    = Email Address
-
-countryName_default             = SN
-stateOrProvinceName_default     = Dakar
-localityName_default            = Dakar
-0.organizationName_default      = My Organization
-organizationalUnitName_default  = My Organization Intermediate CA
-
-[ v3_intermediate_ca ]
-subjectKeyIdentifier   = hash
-authorityKeyIdentifier = keyid:always,issuer
-basicConstraints       = critical, CA:true, pathlen:0
-keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
-
-[ usr_cert ]
-basicConstraints        = CA:FALSE
-nsCertType               = client, email
-nsComment                = "OpenSSL Generated Client Certificate"
-subjectKeyIdentifier    = hash
-authorityKeyIdentifier  = keyid,issuer
-keyUsage                 = critical, nonRepudiation, digitalSignature, keyEncipherment
-extendedKeyUsage         = clientAuth, emailProtection
-
-[ server_cert ]
-basicConstraints        = CA:FALSE
-nsCertType               = server
-nsComment                = "OpenSSL Generated Server Certificate"
-subjectKeyIdentifier    = hash
-authorityKeyIdentifier  = keyid,issuer:always
-keyUsage                 = critical, digitalSignature, keyEncipherment
-extendedKeyUsage         = serverAuth
-
-[ crl_ext ]
-authorityKeyIdentifier = keyid:always
-
-[ ocsp ]
-basicConstraints        = CA:FALSE
-subjectKeyIdentifier    = hash
-authorityKeyIdentifier  = keyid,issuer
-keyUsage                 = critical, digitalSignature
-extendedKeyUsage         = critical, OCSPSigning
-EOF
-
-# -----------------------------------------------------------------------------
-# 3. Intermediate private key
+# 2. Intermediate private key
 # -----------------------------------------------------------------------------
 if [ -f private/intermediate.key.pem ]; then
   echo "[*] Intermediate key already exists, skipping generation"
@@ -166,17 +119,23 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 4. CSR
+# 3. CSR
 # -----------------------------------------------------------------------------
+SUBJECT="/C=${CA_COUNTRY}/ST=${CA_STATE}/L=${CA_LOCALITY}/O=${CA_ORG}/OU=${CA_ORG_UNIT}/CN=${CA_COMMON_NAME}"
+if [ -n "${CA_EMAIL}" ]; then
+  SUBJECT="${SUBJECT}/emailAddress=${CA_EMAIL}"
+fi
+
 echo "[*] Generating intermediate CSR"
 openssl req -new \
-  -config openssl.cnf \
+  -config "${INT_CONFIG}" \
+  -subj "${SUBJECT}" \
   -key private/intermediate.key.pem \
   -out csr/intermediate.csr.pem \
   -sha256
 
 # -----------------------------------------------------------------------------
-# 5. Sign the CSR with the Root CA
+# 4. Sign the CSR with the Root CA
 # -----------------------------------------------------------------------------
 echo "[*] Signing CSR with Root CA (730 days)"
 echo "    You'll be prompted for the ROOT key passphrase, then to confirm signing."
@@ -193,7 +152,7 @@ echo "[*] Verifying intermediate cert against root"
 openssl verify -CAfile "${ROOT_CA_DIR}/certs/ca.cert.pem" certs/intermediate.cert.pem
 
 # -----------------------------------------------------------------------------
-# 6. Chain file (intermediate + root)
+# 5. Chain file (intermediate + root)
 # -----------------------------------------------------------------------------
 echo "[*] Building CA chain file"
 cat certs/intermediate.cert.pem "${ROOT_CA_DIR}/certs/ca.cert.pem" > certs/ca-chain.cert.pem
