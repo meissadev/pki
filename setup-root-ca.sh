@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-#
-# setup-root-ca.sh
-# Step 1 of a Root CA / Intermediate CA PKI hierarchy.
-# Creates the Root CA directory structure, config, private key, and
-# self-signed root certificate.
-#
-# Usage: ./setup-root-ca.sh [ca-dir]
-#   ca-dir defaults to "./ca"
 
 set -euo pipefail
 
 CA_DIR="${1:-./ca}"
+
+# -----------------------------------------------------------------------------
+# 0. Distinguished Name defaults (override via env vars)
+# -----------------------------------------------------------------------------
+CA_COUNTRY="${CA_COUNTRY:-SN}"
+CA_STATE="${CA_STATE:-Dakar}"
+CA_LOCALITY="${CA_LOCALITY:-Dakar}"
+CA_ORG="${CA_ORG:-My Organization}"
+CA_ORG_UNIT="${CA_ORG_UNIT:-My Organization Root CA}"
+CA_EMAIL="${CA_EMAIL:-}"
+
+echo "[*] Distinguished Name defaults for this CA:"
+echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}"
+echo "      O=${CA_ORG}  OU=${CA_ORG_UNIT}  emailAddress=${CA_EMAIL:-<none>}"
+echo "    Override with CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG / CA_ORG_UNIT / CA_EMAIL"
 
 # -----------------------------------------------------------------------------
 # 1. Directory structure
@@ -34,10 +41,13 @@ touch index.txt
 # -----------------------------------------------------------------------------
 # Generated locally rather than fetched, since the jamielinux.com URL serves
 # an HTML doc page, not the raw config — piping that into openssl.cnf would
-# produce a broken config. Adjust the [ policy_strict ] / distinguished_name
-# defaults to match your org before running the next step.
+# produce a broken config.
+#
+# Heredoc is UNQUOTED so CA_COUNTRY etc. get substituted by bash; every
+# OpenSSL-native $var (like $dir) is escaped with a backslash so OpenSSL
+# still expands those itself at run time.
 echo "[*] Writing openssl.cnf"
-cat > openssl.cnf <<'EOF'
+cat > openssl.cnf <<EOF
 # OpenSSL root CA configuration file.
 
 [ ca ]
@@ -45,18 +55,18 @@ default_ca = CA_default
 
 [ CA_default ]
 dir               = .
-certs             = $dir/certs
-crl_dir           = $dir/crl
-new_certs_dir     = $dir/newcerts
-database          = $dir/index.txt
-serial            = $dir/serial
-RANDFILE          = $dir/private/.rand
+certs             = \$dir/certs
+crl_dir           = \$dir/crl
+new_certs_dir     = \$dir/newcerts
+database          = \$dir/index.txt
+serial            = \$dir/serial
+RANDFILE          = \$dir/private/.rand
 
-private_key       = $dir/private/ca.key.pem
-certificate       = $dir/certs/ca.cert.pem
+private_key       = \$dir/private/ca.key.pem
+certificate       = \$dir/certs/ca.cert.pem
 
-crlnumber         = $dir/crlnumber
-crl               = $dir/crl/ca.crl.pem
+crlnumber         = \$dir/crlnumber
+crl               = \$dir/crl/ca.crl.pem
 crl_extensions    = crl_ext
 default_crl_days  = 365
 
@@ -94,48 +104,57 @@ x509_extensions     = v3_ca
 
 [ req_distinguished_name ]
 countryName                    = Country Name (2 letter code)
-stateOrProvinceName            = State or Province Name
-localityName                   = Locality Name
-0.organizationName             = Organization Name
-organizationalUnitName         = Organizational Unit Name
-commonName                     = Common Name
-emailAddress                   = Email Address
+stateOrProvinceName             = State or Province Name
+localityName                    = Locality Name
+0.organizationName               = Organization Name
+organizationalUnitName          = Organizational Unit Name
+commonName                      = Common Name
+emailAddress                    = Email Address
 
-countryName_default             = SN
-stateOrProvinceName_default     = Dakar
-localityName_default            = Dakar
-0.organizationName_default      = My Organization
-organizationalUnitName_default  = My Organization Root CA
+countryName_default             = ${CA_COUNTRY}
+stateOrProvinceName_default     = ${CA_STATE}
+localityName_default            = ${CA_LOCALITY}
+0.organizationName_default      = ${CA_ORG}
+organizationalUnitName_default  = ${CA_ORG_UNIT}
+EOF
+
+# emailAddress_default is only written if CA_EMAIL was set, so an empty
+# value doesn't force an empty-but-present field in the req prompts.
+if [ -n "${CA_EMAIL}" ]; then
+  echo "emailAddress_default             = ${CA_EMAIL}" >> openssl.cnf
+fi
+
+cat >> openssl.cnf <<'EOF'
 
 [ v3_ca ]
 subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid:always,issuer
 basicConstraints       = critical, CA:true
-keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
+keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
 
 [ v3_intermediate_ca ]
 subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid:always,issuer
 basicConstraints       = critical, CA:true, pathlen:0
-keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
+keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
 
 [ usr_cert ]
 basicConstraints        = CA:FALSE
-nsCertType              = client, email
-nsComment               = "OpenSSL Generated Client Certificate"
+nsCertType               = client, email
+nsComment                = "OpenSSL Generated Client Certificate"
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
-keyUsage                = critical, nonRepudiation, digitalSignature, keyEncipherment
-extendedKeyUsage        = clientAuth, emailProtection
+keyUsage                 = critical, nonRepudiation, digitalSignature, keyEncipherment
+extendedKeyUsage         = clientAuth, emailProtection
 
 [ server_cert ]
 basicConstraints        = CA:FALSE
-nsCertType              = server
-nsComment               = "OpenSSL Generated Server Certificate"
+nsCertType               = server
+nsComment                = "OpenSSL Generated Server Certificate"
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer:always
-keyUsage                = critical, digitalSignature, keyEncipherment
-extendedKeyUsage        = serverAuth
+keyUsage                 = critical, digitalSignature, keyEncipherment
+extendedKeyUsage         = serverAuth
 
 [ crl_ext ]
 authorityKeyIdentifier = keyid:always
@@ -144,8 +163,8 @@ authorityKeyIdentifier = keyid:always
 basicConstraints        = CA:FALSE
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid,issuer
-keyUsage                = critical, digitalSignature
-extendedKeyUsage        = critical, OCSPSigning
+keyUsage                 = critical, digitalSignature
+extendedKeyUsage         = critical, OCSPSigning
 EOF
 
 # -----------------------------------------------------------------------------

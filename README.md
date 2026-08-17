@@ -1,5 +1,54 @@
 # This is a quantum aware pki installation and configuration in Debian-based Linux distributions
 
+# setup-root-ca.sh
+# Step 1 of a Root CA / Intermediate CA PKI hierarchy.
+# Creates the Root CA directory structure, config, private key, and
+# self-signed root certificate.
+#
+# Usage: ./setup-root-ca.sh [ca-dir]
+#   ca-dir defaults to "./ca"
+#
+# The req_distinguished_name defaults (country, state, locality, org, ...)
+# can be overridden via environment variables so you don't have to edit the
+# script. The intermediate CA script reads these same values back out of
+# this root's openssl.cnf, so setting them here is enough to keep root and
+# intermediate consistent.
+#
+#   CA_COUNTRY=SN CA_STATE=Dakar CA_LOCALITY=Dakar \
+#   CA_ORG="My Organization" CA_ORG_UNIT="My Organization Root CA" \
+#   CA_EMAIL=pki@example.com \
+#   ./setup-root-ca.sh
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## 1. Requirements
 
 * **VMs:** at least 2
