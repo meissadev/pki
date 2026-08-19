@@ -1,22 +1,43 @@
 #!/usr/bin/env bash
+#
+# setup-root-ca.sh
+# Step 1 of a Root CA / Intermediate CA PKI hierarchy.
+#
+# Operates on an ALREADY-EXISTING ./ca/openssl.cnf (the one that uses
+# ${ENV::CA_COUNTRY} etc. substitutions) rather than generating one, so the
+# config stays checked into your repo and under version control.
+#
+# Usage:
+#   CA_COUNTRY=SN CA_STATE=Dakar CA_LOCALITY=Dakar \
+#   CA_ORG="My Organization" CA_ORG_UNIT="My Organization Root CA" \
+#   CA_COMMON_NAME="My Organization Root CA" \
+#   [CA_EMAIL=pki@example.com] \
+#   ./setup-root-ca.sh [ca-dir]
+#
+# ca-dir defaults to "./ca" and must already contain openssl.cnf.
+#
+# All six identity vars above are REQUIRED except CA_EMAIL. The script also
+# writes <ca-dir>/ca-defaults.env, containing just the fields that MUST be
+# identical between root and intermediate (country/state/locality/org) —
+# policy_strict in openssl.cnf enforces that match when the root signs the
+# intermediate's CSR. setup-intermediate-ca.sh sources that file
+# automatically, so you only ever type those four values once.
 
 set -euo pipefail
 
-CA_DIR="${1:-./ca}"
-
-echo "[*] Using existing CA directory: ${CA_DIR}"
-if [ ! -d "${CA_DIR}" ]; then
-  echo "[!] Directory does not exist: ${CA_DIR}" >&2
+ROOT_CA_DIR="${1:-./ca}"
+export ROOT_CA_DIR
+echo "[*] Using existing CA directory: ${ROOT_CA_DIR}"
+if [ ! -d "${ROOT_CA_DIR}" ]; then
+  echo "[!] Directory does not exist: ${ROOT_CA_DIR}" >&2
   exit 1
 fi
 
-cd "${CA_DIR}"
-
+cd "${ROOT_CA_DIR}"
 CA_CONFIG="./openssl.cnf"
 
-
-if [ ! -f "${CA_CONFIG}" ]; then
-  echo "[!] Missing OpenSSL config file: ${CA_CONFIG}" >&2
+if [ ! -s "${CA_CONFIG}" ]; then
+  echo "[!] Missing or empty OpenSSL config file: ${CA_CONFIG}" >&2
   exit 1
 fi
 
@@ -27,50 +48,20 @@ for required_var in CA_COUNTRY CA_STATE CA_LOCALITY CA_ORG CA_ORG_UNIT CA_COMMON
   if [ -z "${!required_var:-}" ]; then
     echo "[!] Required environment variable ${required_var} is not set." >&2
     echo "    Example:" >&2
-    echo "      CA_COUNTRY=SN CA_STATE=Dakar CA_LOCALITY=Dakar " >&2
-    echo "      CA_ORG='My Organization' CA_ORG_UNIT='My Organization Root CA' " >&2
+    echo "      CA_COUNTRY=SN CA_STATE=Dakar CA_LOCALITY=Dakar \\" >&2
+    echo "      CA_ORG='My Organization' CA_ORG_UNIT='My Organization Root CA' \\" >&2
     echo "      CA_COMMON_NAME='My Organization Root CA' ./setup-root-ca.sh" >&2
     exit 1
   fi
 done
-
+export CA_COUNTRY CA_STATE CA_LOCALITY CA_ORG CA_ORG_UNIT CA_COMMON_NAME
 CA_EMAIL="${CA_EMAIL:-}"
+export CA_EMAIL
 
-echo "[*] Distinguished Name values for this CA:"
+echo "[*] Distinguished Name for this root:"
 echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}"
 echo "      O=${CA_ORG}  OU=${CA_ORG_UNIT}  CN=${CA_COMMON_NAME}"
 echo "      emailAddress=${CA_EMAIL:-<none>}"
-echo "    Values are read from environment variables; no DN defaults are set in the repo config."
-
-# -----------------------------------------------------------------------------
-# 0. Distinguished Name defaults (override via env vars)
-# -----------------------------------------------------------------------------
-CA_COUNTRY="${CA_COUNTRY:-SN}"
-CA_STATE="${CA_STATE:-Dakar}"
-CA_LOCALITY="${CA_LOCALITY:-Dakar}"
-CA_ORG="${CA_ORG:-My Organization}"
-CA_ORG_UNIT="${CA_ORG_UNIT:-My Organization Root CA}"
-CA_EMAIL="${CA_EMAIL:-}"
-
-echo "[*] Distinguished Name defaults for this CA:"
-echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}"
-echo "      O=${CA_ORG}  OU=${CA_ORG_UNIT}  emailAddress=${CA_EMAIL:-<none>}"
-echo "    Override with CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG / CA_ORG_UNIT / CA_EMAIL"
-
-# -----------------------------------------------------------------------------
-# 0. Distinguished Name defaults (override via env vars)
-# -----------------------------------------------------------------------------
-CA_COUNTRY="${CA_COUNTRY:-SN}"
-CA_STATE="${CA_STATE:-Dakar}"
-CA_LOCALITY="${CA_LOCALITY:-Dakar}"
-CA_ORG="${CA_ORG:-My Organization}"
-CA_ORG_UNIT="${CA_ORG_UNIT:-My Organization Root CA}"
-CA_EMAIL="${CA_EMAIL:-}"
-
-echo "[*] Distinguished Name defaults for this CA:"
-echo "      C=${CA_COUNTRY}  ST=${CA_STATE}  L=${CA_LOCALITY}"
-echo "      O=${CA_ORG}  OU=${CA_ORG_UNIT}  emailAddress=${CA_EMAIL:-<none>}"
-echo "    Override with CA_COUNTRY / CA_STATE / CA_LOCALITY / CA_ORG / CA_ORG_UNIT / CA_EMAIL"
 
 # -----------------------------------------------------------------------------
 # 1. Directory structure
@@ -86,19 +77,20 @@ touch index.txt
 [ -f crlnumber ] || echo 1000 > crlnumber
 
 # -----------------------------------------------------------------------------
-# 2. Use the existing OpenSSL config; do not overwrite it
+# 2. Share the DN fields that MUST match the intermediate
 # -----------------------------------------------------------------------------
-if [ ! -s "${CA_CONFIG}" ]; then
-  echo "[!] ${CA_CONFIG} is empty. Restore the repository's configuration before continuing." >&2
-  exit 1
-fi
-
-# Build the subject explicitly from env vars so the req defaults in the config
-# may remain empty while the script still runs non-interactively.
-SUBJECT="/C=${CA_COUNTRY}/ST=${CA_STATE}/L=${CA_LOCALITY}/O=${CA_ORG}/OU=${CA_ORG_UNIT}/CN=${CA_COMMON_NAME}"
-if [ -n "${CA_EMAIL}" ]; then
-  SUBJECT="${SUBJECT}/emailAddress=${CA_EMAIL}"
-fi
+echo "[*] Writing ca-defaults.env (shared C/ST/L/O for the intermediate)"
+cat > ca-defaults.env <<EOF
+# Auto-generated by setup-root-ca.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
+# Sourced by setup-intermediate-ca.sh — do not edit by hand, re-run
+# setup-root-ca.sh instead if these values need to change.
+: "\${CA_COUNTRY:=${CA_COUNTRY}}"
+: "\${CA_STATE:=${CA_STATE}}"
+: "\${CA_LOCALITY:=${CA_LOCALITY}}"
+: "\${CA_ORG:=${CA_ORG}}"
+export CA_COUNTRY CA_STATE CA_LOCALITY CA_ORG
+EOF
+chmod 444 ca-defaults.env
 
 # -----------------------------------------------------------------------------
 # 3. Root private key
@@ -115,6 +107,13 @@ fi
 # -----------------------------------------------------------------------------
 # 4. Root certificate (self-signed)
 # -----------------------------------------------------------------------------
+# -subj makes this fully non-interactive regardless of whether the
+# ${ENV::...} defaults in openssl.cnf resolve to anything.
+SUBJECT="/C=${CA_COUNTRY}/ST=${CA_STATE}/L=${CA_LOCALITY}/O=${CA_ORG}/OU=${CA_ORG_UNIT}/CN=${CA_COMMON_NAME}"
+if [ -n "${CA_EMAIL}" ]; then
+  SUBJECT="${SUBJECT}/emailAddress=${CA_EMAIL}"
+fi
+
 echo "[*] Generating self-signed root certificate (10 years, sha256)"
 openssl req -new -x509 -days 3650 \
   -config "${CA_CONFIG}" \
