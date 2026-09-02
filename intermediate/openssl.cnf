@@ -7,7 +7,7 @@ default_ca = CA_default
 
 [ CA_default ]
 # Directory and file locations.
-dir               = .
+dir               = ${ENV::INT_DIR}
 certs             = $dir/certs
 crl_dir           = $dir/crl
 new_certs_dir     = $dir/newcerts
@@ -85,13 +85,13 @@ emailAddress                    = Email Address
 # <root-ca-dir>/ca-defaults.env instead of having them retyped here.
 # organizationalUnitName / commonName / emailAddress are intermediate-
 # specific and passed as their own required env vars.
-countryName_default             = ${ENV::CA_COUNTRY}
-stateOrProvinceName_default     = ${ENV::CA_STATE}
-localityName_default            = ${ENV::CA_LOCALITY}
-0.organizationName_default      = ${ENV::CA_ORG}
-organizationalUnitName_default  = ${ENV::CA_ORG_UNIT}
-commonName_default              = ${ENV::CA_COMMON_NAME}
-emailAddress_default            = ${ENV::CA_EMAIL}
+countryName_default             =
+stateOrProvinceName_default     =
+localityName_default            =
+0.organizationName_default      =
+organizationalUnitName_default  =
+commonName_default              =
+emailAddress_default            =
 
 [ v3_ca ]
 # Extensions for a typical CA (`man x509v3_config`).
