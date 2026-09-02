@@ -82,12 +82,5 @@ run only, export it yourself before invoking the script — the sourced
 file uses ":=" so it never clobbers an already-exported variable.
 
 **Example**:
-    CA_COUNTRY="SN" \
-    CA_STATE="Dakar" \
-    CA_LOCALITY="Dakar" \
-    CA_ORG="My Organization" \
-    CA_ORG_UNIT="My Organization Root CA" \
-    CA_COMMON_NAME="My Organization Root CA" \
-    CA_EMAIL="mail@pki.conf" \
     ./setup-intermediate-ca.sh /path/to/ca
 
